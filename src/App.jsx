@@ -131,6 +131,16 @@ const App = () => {
         } else {
             loadCsvData(DEFAULT_CSV_URL);
         }
+
+        // Disable pinch zoom on iOS
+        const handleGestureStart = (e) => {
+            e.preventDefault();
+        };
+        document.addEventListener('gesturestart', handleGestureStart);
+
+        return () => {
+            document.removeEventListener('gesturestart', handleGestureStart);
+        };
     }, []);
 
     // 設定保存
@@ -298,7 +308,7 @@ const App = () => {
                                 <Disc className="text-white w-6 h-6" />
                             </div>
                             <h1 className="text-xl font-bold tracking-tight bg-gradient-to-r from-indigo-200 to-white bg-clip-text text-transparent">
-                                Disc Manager
+                                NYAN DISC
                             </h1>
                         </div>
                         {/* Mobile Settings Button */}
