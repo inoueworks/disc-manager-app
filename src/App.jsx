@@ -104,7 +104,7 @@ const App = () => {
     const [settingsModalOpen, setSettingsModalOpen] = useState(false);
 
     // Settings / API Keys
-    const [tmdbApiKey, setTmdbApiKey] = useState("");
+    const [tmdbApiKey, setTmdbApiKey] = useState(import.meta.env.VITE_TMDB_API_KEY || "");
     const [csvUrl, setCsvUrl] = useState(DEFAULT_CSV_URL);
 
     // Status
@@ -117,7 +117,13 @@ const App = () => {
         const savedCsvUrl = localStorage.getItem("movie_manager_csv_url");
         const savedTmdbKey = localStorage.getItem("movie_manager_tmdb_key");
 
-        if (savedTmdbKey) setTmdbApiKey(savedTmdbKey);
+        // 環境変数がある場合、かつLocalStorageに保存されていない場合は環境変数を使用
+        // LocalStorageに保存されている場合はそちら（ユーザー設定）を優先する
+        if (savedTmdbKey) {
+            setTmdbApiKey(savedTmdbKey);
+        } else if (import.meta.env.VITE_TMDB_API_KEY) {
+            setTmdbApiKey(import.meta.env.VITE_TMDB_API_KEY);
+        }
 
         if (savedCsvUrl) {
             setCsvUrl(savedCsvUrl);
