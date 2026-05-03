@@ -32,6 +32,10 @@ const LayoutGrid = (props) => <IconBase {...props}><rect width="7" height="7" x=
 const Filter = (props) => <IconBase {...props}><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" /></IconBase>;
 const Trash2 = (props) => <IconBase {...props}><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /><line x1="10" x2="10" y1="11" y2="17" /><line x1="14" x2="14" y1="11" y2="17" /></IconBase>;
 const Plus = (props) => <IconBase {...props}><path d="M5 12h14" /><path d="M12 5v14" /></IconBase>;
+const ChevronUp = (props) => <IconBase {...props}><path d="m18 15-6-6-6 6" /></IconBase>;
+const ChevronDown = (props) => <IconBase {...props}><path d="m6 9 6 6 6-6" /></IconBase>;
+const Download = (props) => <IconBase {...props}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" x2="12" y1="15" y2="3" /></IconBase>;
+const Copy = (props) => <IconBase {...props}><rect width="14" height="14" x="8" y="8" rx="2" ry="2" /><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" /></IconBase>;
 
 
 // デフォルトのCSV読み込み先
@@ -92,6 +96,17 @@ const parseCSV = (text) => {
     return rows;
 };
 
+const getCachedMetadata = (title, year) => {
+    const cache = JSON.parse(localStorage.getItem('movie_metadata_cache') || '{}');
+    return cache[`${title}_${year}`] || null;
+};
+
+const saveCachedMetadata = (title, year, data) => {
+    const cache = JSON.parse(localStorage.getItem('movie_metadata_cache') || '{}');
+    cache[`${title}_${year}`] = data;
+    localStorage.setItem('movie_metadata_cache', JSON.stringify(cache));
+};
+
 const App = () => {
     // Main Data
     const [collection, setCollection] = useState(INITIAL_DATA);
@@ -102,6 +117,18 @@ const App = () => {
     // Default to 'list' view as requested
     const [viewMode, setViewMode] = useState('list');
     const [settingsModalOpen, setSettingsModalOpen] = useState(false);
+    const [sortColumn, setSortColumn] = useState(null);
+    const [sortDirection, setSortDirection] = useState('asc');
+    const [selectedMovie, setSelectedMovie] = useState(null);
+
+    const handleSort = (column) => {
+        if (sortColumn === column) {
+            setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+        } else {
+            setSortColumn(column);
+            setSortDirection('asc');
+        }
+    };
 
     // Settings / API Keys
     const [tmdbApiKey, setTmdbApiKey] = useState(import.meta.env.VITE_TMDB_API_KEY || "");
@@ -160,7 +187,7 @@ const App = () => {
         return ["All", ...Array.from(genreSet).sort()];
     }, [collection]);
 
-    // フィルタリングロジック（ジャンル対応）
+    // フィルタリング・ソートロジック（ジャンル対応）
     const filteredCollection = useMemo(() => {
         let filtered = collection;
 
@@ -177,8 +204,26 @@ const App = () => {
                 return targetText.includes(lowerQuery);
             });
         }
+
+        // Sort
+        if (sortColumn) {
+            filtered = [...filtered].sort((a, b) => {
+                let aVal = a[sortColumn] || '';
+                let bVal = b[sortColumn] || '';
+
+                if (sortColumn === 'title') {
+                    aVal = a.titleJp || a.title || '';
+                    bVal = b.titleJp || b.title || '';
+                }
+
+                return sortDirection === 'asc' 
+                    ? String(aVal).localeCompare(String(bVal), undefined, {numeric: true})
+                    : String(bVal).localeCompare(String(aVal), undefined, {numeric: true});
+            });
+        }
+
         return filtered;
-    }, [collection, searchQuery, selectedGenre]);
+    }, [collection, searchQuery, selectedGenre, sortColumn, sortDirection]);
 
     // CSV読み込み
     const loadCsvData = async (url) => {
@@ -212,16 +257,20 @@ const App = () => {
 
                 const id = (idIdx !== -1 && row[idIdx]) ? row[idIdx] : `csv-${index}`;
                 const uniqueId = `row-${index}`;
+                const title = titleIdx !== -1 ? row[titleIdx] : (row[0] || "No Title");
+                const year = yearIdx !== -1 ? row[yearIdx] : "";
+                const csvPoster = (posterIdx !== -1 && row[posterIdx]) ? row[posterIdx] : "";
+                const cachedMeta = getCachedMetadata(title, year);
 
                 return {
                     uid: uniqueId,
                     id: id,
-                    title: titleIdx !== -1 ? row[titleIdx] : (row[0] || "No Title"),
-                    titleJp: "",
-                    year: yearIdx !== -1 ? row[yearIdx] : "",
+                    title: title,
+                    titleJp: cachedMeta?.titleJp || "",
+                    year: year,
                     genre: genreIdx !== -1 ? row[genreIdx] : "",
                     note: noteIdx !== -1 ? row[noteIdx] : "",
-                    poster: (posterIdx !== -1 && row[posterIdx]) ? row[posterIdx] : "",
+                    poster: csvPoster || cachedMeta?.poster || "",
                     source: 'csv'
                 };
             }).filter(Boolean);
@@ -281,6 +330,10 @@ const App = () => {
                             updatedItem.titleJp = best.trackName;
                         }
                         newCollection[i] = updatedItem;
+                        saveCachedMetadata(item.title, item.year, {
+                            poster: updatedItem.poster,
+                            titleJp: updatedItem.titleJp
+                        });
                     }
                 } catch (e) {
                     console.error("Fetch failed for", item.title);
@@ -295,6 +348,39 @@ const App = () => {
         setSyncProgress(0);
         setStatusMsg("画像同期が完了しました");
         setTimeout(() => setStatusMsg(""), 3000);
+    };
+
+    const exportCSV = () => {
+        const header = ["ID", "タイトル", "年", "ジャンル", "備考", "画像"];
+        const rows = collection.map(item => {
+            const escapeCSV = (str) => {
+                if (str === null || str === undefined) return '""';
+                const s = String(str);
+                if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+                    return `"${s.replace(/"/g, '""')}"`;
+                }
+                return s;
+            };
+            
+            return [
+                escapeCSV(item.id && !item.id.startsWith('csv-') ? item.id : ''),
+                escapeCSV(item.titleJp || item.title),
+                escapeCSV(item.year),
+                escapeCSV(item.genre),
+                escapeCSV(item.note),
+                escapeCSV(item.poster)
+            ].join(',');
+        });
+        
+        const csvContent = [header.join(','), ...rows].join('\n');
+        
+        navigator.clipboard.writeText(csvContent).then(() => {
+            setStatusMsg("CSVをクリップボードにコピーしました！");
+            setTimeout(() => setStatusMsg(""), 3000);
+        }).catch(err => {
+            setStatusMsg("エラー: コピーに失敗しました");
+            console.error(err);
+        });
     };
 
     return (
@@ -401,15 +487,25 @@ const App = () => {
                         </h2>
                         {/* Image Sync Button (Visible if items exist) */}
                         {collection.length > 0 && (
-                            <button
-                                onClick={syncMetadata}
-                                disabled={syncProgress > 0}
-                                className="text-xs flex items-center gap-1 bg-slate-800 hover:bg-slate-700 text-indigo-400 px-3 py-1.5 rounded border border-slate-700 transition-colors"
-                                title="タイトルと年を元にポスター画像を自動検索します"
-                            >
-                                {syncProgress > 0 ? <Loader2 className="w-3 h-3 animate-spin" /> : <ImageDown className="w-3 h-3" />}
-                                {syncProgress > 0 ? `${syncProgress}%` : "画像を取得"}
-                            </button>
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={syncMetadata}
+                                    disabled={syncProgress > 0}
+                                    className="text-xs flex items-center gap-1 bg-slate-800 hover:bg-slate-700 text-indigo-400 px-3 py-1.5 rounded border border-slate-700 transition-colors"
+                                    title="タイトルと年を元にポスター画像を自動検索します"
+                                >
+                                    {syncProgress > 0 ? <Loader2 className="w-3 h-3 animate-spin" /> : <ImageDown className="w-3 h-3" />}
+                                    {syncProgress > 0 ? `${syncProgress}%` : "画像を取得"}
+                                </button>
+                                <button
+                                    onClick={exportCSV}
+                                    className="text-xs flex items-center gap-1 bg-slate-800 hover:bg-slate-700 text-emerald-400 px-3 py-1.5 rounded border border-slate-700 transition-colors"
+                                    title="最新のデータをCSV形式でクリップボードにコピーします。スプレッドシートに貼り付けて上書きできます。"
+                                >
+                                    <Copy className="w-3 h-3" />
+                                    CSVコピー
+                                </button>
+                            </div>
                         )}
                     </div>
 
@@ -433,7 +529,11 @@ const App = () => {
                         {viewMode === 'grid' ? (
                             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 sm:gap-6 animate-fade-in">
                                 {filteredCollection.map((movie) => (
-                                    <div key={movie.uid} className="group relative bg-slate-800 rounded-lg overflow-hidden shadow-xl border border-slate-700/50 hover:border-indigo-500/50 transition-all duration-300 hover:-translate-y-1">
+                                    <div 
+                                        key={movie.uid} 
+                                        className="group relative bg-slate-800 rounded-lg overflow-hidden shadow-xl border border-slate-700/50 hover:border-indigo-500/50 transition-all duration-300 hover:-translate-y-1 cursor-pointer"
+                                        onClick={() => setSelectedMovie(movie)}
+                                    >
 
                                         {/* Badges */}
                                         <div className="absolute top-2 left-2 z-10 flex flex-col gap-1">
@@ -489,17 +589,69 @@ const App = () => {
                                     <table className="w-full text-left text-sm text-slate-400">
                                         <thead className="bg-slate-800 text-slate-200 uppercase font-bold text-xs border-b border-slate-700">
                                             <tr>
-                                                <th className="px-4 py-3 w-16 text-center">画像</th>
-                                                <th className="px-4 py-3 min-w-[80px]">ID</th>
-                                                <th className="px-4 py-3 min-w-[200px]">タイトル</th>
-                                                <th className="px-4 py-3 text-center">年</th>
-                                                <th className="px-4 py-3 hidden sm:table-cell">ジャンル</th>
-                                                <th className="px-4 py-3 hidden md:table-cell">備考</th>
+                                                <th className="px-4 py-3 w-16 text-center select-none">画像</th>
+                                                <th 
+                                                    className="px-4 py-3 min-w-[80px] cursor-pointer hover:bg-slate-700/50 transition-colors group/th select-none"
+                                                    onClick={() => handleSort('id')}
+                                                >
+                                                    <div className="flex items-center gap-1">
+                                                        ID
+                                                        {sortColumn === 'id' ? (
+                                                            sortDirection === 'asc' ? <ChevronUp className="w-4 h-4 text-indigo-400" /> : <ChevronDown className="w-4 h-4 text-indigo-400" />
+                                                        ) : (
+                                                            <ChevronUp className="w-4 h-4 opacity-0 group-hover/th:opacity-30" />
+                                                        )}
+                                                    </div>
+                                                </th>
+                                                <th 
+                                                    className="px-4 py-3 min-w-[200px] cursor-pointer hover:bg-slate-700/50 transition-colors group/th select-none"
+                                                    onClick={() => handleSort('title')}
+                                                >
+                                                    <div className="flex items-center gap-1">
+                                                        タイトル
+                                                        {sortColumn === 'title' ? (
+                                                            sortDirection === 'asc' ? <ChevronUp className="w-4 h-4 text-indigo-400" /> : <ChevronDown className="w-4 h-4 text-indigo-400" />
+                                                        ) : (
+                                                            <ChevronUp className="w-4 h-4 opacity-0 group-hover/th:opacity-30" />
+                                                        )}
+                                                    </div>
+                                                </th>
+                                                <th 
+                                                    className="px-4 py-3 text-center cursor-pointer hover:bg-slate-700/50 transition-colors group/th select-none"
+                                                    onClick={() => handleSort('year')}
+                                                >
+                                                    <div className="flex items-center justify-center gap-1">
+                                                        年
+                                                        {sortColumn === 'year' ? (
+                                                            sortDirection === 'asc' ? <ChevronUp className="w-4 h-4 text-indigo-400" /> : <ChevronDown className="w-4 h-4 text-indigo-400" />
+                                                        ) : (
+                                                            <ChevronUp className="w-4 h-4 opacity-0 group-hover/th:opacity-30" />
+                                                        )}
+                                                    </div>
+                                                </th>
+                                                <th 
+                                                    className="px-4 py-3 hidden sm:table-cell cursor-pointer hover:bg-slate-700/50 transition-colors group/th select-none"
+                                                    onClick={() => handleSort('genre')}
+                                                >
+                                                    <div className="flex items-center gap-1">
+                                                        ジャンル
+                                                        {sortColumn === 'genre' ? (
+                                                            sortDirection === 'asc' ? <ChevronUp className="w-4 h-4 text-indigo-400" /> : <ChevronDown className="w-4 h-4 text-indigo-400" />
+                                                        ) : (
+                                                            <ChevronUp className="w-4 h-4 opacity-0 group-hover/th:opacity-30" />
+                                                        )}
+                                                    </div>
+                                                </th>
+                                                <th className="px-4 py-3 hidden md:table-cell select-none">備考</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-700/50 bg-slate-900/50">
                                             {filteredCollection.map((movie) => (
-                                                <tr key={movie.uid} className="hover:bg-slate-800/50 transition-colors group">
+                                                <tr 
+                                                    key={movie.uid} 
+                                                    className="hover:bg-slate-800/50 transition-colors group cursor-pointer"
+                                                    onClick={() => setSelectedMovie(movie)}
+                                                >
                                                     <td className="px-4 py-2 text-center">
                                                         <div className="w-10 h-14 bg-slate-800 rounded overflow-hidden relative border border-slate-700 mx-auto">
                                                             {movie.poster ? (
@@ -594,6 +746,61 @@ const App = () => {
                                 {isLoadingCsv ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
                                 設定を保存して読み込む
                             </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Detail Modal */}
+            {selectedMovie && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setSelectedMovie(null)}></div>
+                    <div className="relative bg-slate-900 w-full max-w-md rounded-xl border border-slate-700 shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-fade-in">
+                        {/* Header */}
+                        <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-900 sticky top-0 z-10">
+                            <h3 className="text-lg font-bold flex items-center gap-2 text-white">
+                                <Film className="w-5 h-5 text-indigo-500" />
+                                詳細情報
+                            </h3>
+                            <button onClick={() => setSelectedMovie(null)} className="p-1 rounded-full hover:bg-slate-800 text-slate-400 transition-colors">
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+                        {/* Body */}
+                        <div className="p-4 overflow-y-auto space-y-4">
+                            <div className="flex gap-4">
+                                {/* Poster */}
+                                <div className="w-24 shrink-0 rounded overflow-hidden shadow-lg border border-slate-700 bg-slate-800">
+                                    {selectedMovie.poster ? (
+                                        <img src={selectedMovie.poster} alt={selectedMovie.title} className="w-full object-cover" />
+                                    ) : (
+                                        <div className="w-full h-36 flex items-center justify-center"><Film className="w-8 h-8 opacity-50 text-slate-400" /></div>
+                                    )}
+                                </div>
+                                {/* Main Info */}
+                                <div className="space-y-2 flex-1">
+                                    <div>
+                                        <div className="font-bold text-lg text-white leading-tight">{selectedMovie.titleJp || selectedMovie.title}</div>
+                                        {selectedMovie.titleJp && selectedMovie.title !== selectedMovie.titleJp && (
+                                            <div className="text-sm text-slate-400">{selectedMovie.title}</div>
+                                        )}
+                                    </div>
+                                    <div className="flex flex-wrap gap-2 text-xs">
+                                        <span className="bg-slate-800 text-slate-300 px-2 py-1 rounded">{selectedMovie.year || '年不明'}</span>
+                                        <span className="bg-slate-800 text-slate-300 px-2 py-1 rounded">{selectedMovie.genre || 'ジャンル未設定'}</span>
+                                        {selectedMovie.id && !selectedMovie.id.startsWith('add-') && !selectedMovie.id.startsWith('csv-') && (
+                                            <span className="bg-indigo-900/50 text-indigo-300 px-2 py-1 rounded font-mono border border-indigo-500/30">ID: {selectedMovie.id}</span>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                            {/* Note Section */}
+                            <div className="bg-slate-800/50 p-3 rounded-lg border border-slate-700/50">
+                                <div className="text-xs text-slate-400 font-bold mb-1">備考</div>
+                                <div className="text-sm text-slate-200 whitespace-pre-wrap break-words">
+                                    {selectedMovie.note ? selectedMovie.note : <span className="opacity-50 italic">（備考はありません）</span>}
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
